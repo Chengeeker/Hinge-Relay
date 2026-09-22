@@ -76,8 +76,8 @@ C:\Users\你的用户名\Documents\Hinge-Relay
 
 ### 可选
 
-- GitHub 账号：用于保存你自己的 Relay 仓库，以及以后接收上游更新。
-- Git：如果你打算用 GitHub 管理代码，建议安装 Git；如果只是部署，也可以使用压缩包和 Wrangler。
+- GitHub 账号：使用本文推荐的“Cloudflare 网页部署”时需要；如果只在本地用 Wrangler 部署，可以不使用 GitHub。
+- Git：网页部署不要求你在电脑上安装 Git；只有你打算在本地开发或使用命令行部署时才需要。
 
 ### 不建议一开始做的事情
 
@@ -85,11 +85,151 @@ C:\Users\你的用户名\Documents\Hinge-Relay
 
 ---
 
-## 4. 第一次部署：照着做即可
+## 4. 第一次部署：推荐网页方案
+
+你有两种部署方式：
+
+| 方式 | 适合谁 | 是否需要在电脑安装 Node.js、Git、Wrangler |
+| --- | --- | --- |
+| Cloudflare 网页 + GitHub | 不熟悉命令行的普通用户，推荐 | 不需要 |
+| Wrangler 命令行 | 开发者或需要本地调试的人 | 需要 |
+
+下面先介绍完全使用网页的方式。后面的命令行部分只是备用方案。
+
+### 4.1 网页端部署前的准备
+
+网页部署依靠 Cloudflare Workers Builds 从 GitHub 读取源码。你不需要在电脑上执行 `npx`，但需要有一个自己的 GitHub 仓库：
+
+1. 打开 [Hinge Relay GitHub 仓库](https://github.com/Chengeeker/Hinge-Relay)。
+2. 点击 `Fork`，把项目复制到你自己的 GitHub 账号下。
+3. 后面的操作都在你自己的 Fork 中进行，不要直接修改上游仓库。
+
+你也可以把源码复制到自己的私有仓库，但必须保留项目根目录下的 `package.json`、`package-lock.json`、`src`、`wrangler.jsonc` 和 `tests`。
+
+### 4.2 在 GitHub 网页修改 Worker 名称和 R2 名称
+
+在你自己的 GitHub 仓库中打开 `wrangler.jsonc`，点击右上角铅笔图标进行编辑。只修改下面两个值：
+
+```jsonc
+{
+  "name": "你自己的-worker名称",
+  "r2_buckets": [
+    {
+      "binding": "BUCKET",
+      "bucket_name": "你自己的-r2-bucket名称"
+    }
+  ]
+}
+```
+
+填写规则：
+
+- `name` 是 Worker 名称。Cloudflare 网页中显示的 Worker 名称必须和这里完全一致。
+- `bucket_name` 是你接下来在 R2 中创建的 bucket 名称。
+- `binding` 必须保持为 `BUCKET`，不能改成其他名字。
+- bucket 名称只能使用小写字母、数字和短横线，不能以短横线开头或结尾。
+- `DEFAULT_TTL_HOURS` 默认是 `168`，表示中转记录最多保留 7 天。
+
+编辑完成后点击 `Commit changes`，提交到 `main` 分支。不要把 `RELAY_ADMIN_TOKEN`、Relay 密钥或其他真实凭据写进这个文件。
+
+### 4.3 在 Cloudflare 网页创建私有 R2 bucket
+
+1. 登录 [Cloudflare Dashboard](https://dash.cloudflare.com/)。
+2. 进入 `R2 Object Storage`。
+3. 点击 `Create bucket`。
+4. 填写的 bucket 名称必须和 GitHub 中 `wrangler.jsonc` 的 `bucket_name` 完全一致。
+5. 选择存储位置和默认存储类别，然后创建。
+
+创建后不要打开公开访问，也不要启用公开的 `r2.dev` 文件地址。Hinge Relay 只通过 Worker API 访问私有 R2。
+
+### 4.4 通过 Cloudflare 网页导入 GitHub 仓库
+
+1. 在 Cloudflare Dashboard 打开 `Workers & Pages`。
+2. 点击 `Create application`。
+3. 在 `Import a repository` 旁边点击 `Get started`。
+4. 选择或授权你的 GitHub 账号。
+5. 选择你自己的 Hinge Relay 仓库和 `main` 分支。
+6. 配置项目时使用下面的值：
+
+| Cloudflare 设置 | 应填写的内容 |
+| --- | --- |
+| Root directory | 留空，或填写 `/`；本项目就在仓库根目录 |
+| Production branch | `main` |
+| Build command | `npm run check`（可选，建议保留） |
+| Deploy command | `npm run deploy` |
+| Non-production branch deploy command | 不需要测试分支时保持默认或关闭 |
+
+本项目已经包含 `wrangler.jsonc`，Cloudflare 会使用其中的 Worker 名称、R2 binding 和定时任务。`npm run deploy` 已经写在 `package.json` 中；如果界面没有要求你填写 Deploy command，也可以使用默认的 `npx wrangler deploy`。
+
+点击 `Save and Deploy`。Cloudflare 会安装项目依赖、执行构建并部署 Worker。成功后会显示一个类似下面的地址：
+
+```text
+https://你的-worker名称.你的子域.workers.dev
+```
+
+Cloudflare 官方说明：连接 GitHub 后，后续推送到选定分支会自动触发构建和部署；如果部署失败，先检查 Dashboard 中 Worker 名称是否与 `wrangler.jsonc` 的 `name` 完全一致。
+
+### 4.5 在 Cloudflare 网页添加管理员 Token
+
+这一步不要把 Token 写进 GitHub。进入刚创建的 Worker：
+
+1. `Workers & Pages` → 选择你的 Worker。
+2. 打开 `Settings`。
+3. 找到 `Variables and Secrets`。
+4. 点击 `Add`，类型选择 `Secret`。
+5. 变量名填写：
+
+```text
+RELAY_ADMIN_TOKEN
+```
+
+6. 值填写一个密码管理器生成的随机高强度 Token，至少 32 字节。
+7. 点击 `Deploy` 保存。
+
+这个 Token 只用于第一次注册 Windows/Android 设备。不要把它误填到 Cloudflare Workers Builds 的 API Token、GitHub Secret 或 `wrangler.jsonc` 中；它们是不同用途的凭据。
+
+### 4.6 检查网页部署是否成功
+
+在浏览器打开：
+
+```text
+https://你的-worker地址/v1/health
+```
+
+如果返回包含 `service`、`relayVersion`、`apiVersion` 和 `configSchemaVersion` 的 JSON，说明 Worker、R2 binding 和路由已经能正常工作。然后再按照[配置两台 Hinge 设备](#5-配置两台-hinge-设备)操作。
+
+### 4.7 如果网页部署提示缺少 BUCKET
+
+优先回到 GitHub，确认 `wrangler.jsonc` 中同时存在：
+
+```jsonc
+"binding": "BUCKET",
+"bucket_name": "你创建的bucket名称"
+```
+
+然后在 Cloudflare 的 `Settings` → `Builds` 中重新执行一次部署。只有在当前 Dashboard 明确要求手动添加 binding 时，才进入 `Settings` → `Bindings` → `Add` → `R2 bucket`，变量名填写 `BUCKET`，选择同一个 bucket 并重新部署。
+
+后续仍应以 GitHub 中的 `wrangler.jsonc` 为准。不要一边在 Dashboard 手动改 binding，一边让 GitHub 构建使用另一份配置。
+
+### 4.8 为什么不推荐直接把代码粘贴到 Cloudflare 编辑器
+
+这个项目不是一个可以粘贴成单个 JavaScript 文件的小 Worker，它包含多个 TypeScript 文件、Hono 依赖、R2 配置、定时任务和测试。直接使用在线代码编辑器容易漏掉依赖或 binding。
+
+因此对不熟悉命令行的用户，推荐使用：
+
+```text
+GitHub 网页仓库
+    → Cloudflare Workers Builds
+    → Cloudflare Dashboard 添加 R2 和 Secret
+```
+
+这条路径不需要本地安装 Node.js、Git、Wrangler，也不需要执行任何 `npx` 命令。Cloudflare Pages 的静态文件上传仍然不能代替 Worker API 部署。
+
+### 4.9 命令行部署（备用方案）
 
 下面命令以 Windows PowerShell 为例。请把示例中的路径替换成你自己保存 Hinge Relay 的位置。
 
-### 第 1 步：进入项目目录
+#### 第 1 步：进入项目目录
 
 ```powershell
 cd "C:\Users\你的用户名\Documents\Hinge-Relay"
@@ -103,7 +243,7 @@ Get-ChildItem
 
 你应该能看到 `package.json`、`wrangler.jsonc`、`src`、`tests` 等文件。
 
-### 第 2 步：安装依赖
+#### 第 2 步：安装依赖
 
 ```powershell
 npm ci
@@ -124,7 +264,7 @@ npm test
 npm run deploy:dry
 ```
 
-### 第 3 步：登录 Cloudflare
+#### 第 3 步：登录 Cloudflare
 
 ```powershell
 npx wrangler login
@@ -134,7 +274,7 @@ npx wrangler login
 
 如果你不想使用网页登录，也可以使用 Cloudflare API Token，但 Token 权限必须足够小，并且不要写进 Git 或 README。第一次部署推荐使用 `wrangler login`。
 
-### 第 4 步：修改自己的 Worker 和 R2 名称
+#### 第 4 步：修改自己的 Worker 和 R2 名称
 
 打开你自己项目目录中的：
 
@@ -164,7 +304,7 @@ npx wrangler login
 - `wrangler.jsonc` 是你的个人部署配置，包含你自己的资源名称。上游同步时不要让它被自动覆盖。
 - `DEFAULT_TTL_HOURS` 默认是 `168`，表示中转记录最多保留 7 天；可以按需要调整，但不建议设置成无限期。
 
-### 第 5 步：创建 R2 bucket
+#### 第 5 步：创建 R2 bucket
 
 假设你在 `wrangler.jsonc` 中填的是 `my-hinge-relay-files`，执行：
 
@@ -178,7 +318,7 @@ npx wrangler r2 bucket create my-hinge-relay-files
 
 R2 bucket 必须保持私有，不要把它公开成静态文件站点，也不要把文件直接放到公开的 `r2.dev` 地址上。客户端应该只通过 Worker API 访问。
 
-### 第 6 步：设置管理员注册 Token
+#### 第 6 步：设置管理员注册 Token
 
 Relay 的“管理员 Token”只用于把设备注册到你的 Worker。设备注册成功后，Hinge 日常传输使用的是每台设备独立的 device token，不再使用管理员 Token。
 
@@ -199,7 +339,7 @@ npx wrangler secret put RELAY_ADMIN_TOKEN
 
 以后如果怀疑 Token 泄露，可以再次执行同一条命令并设置新值，然后重新注册设备。
 
-### 第 7 步：部署 Worker
+#### 第 7 步：部署 Worker
 
 ```powershell
 npm run deploy
@@ -218,7 +358,7 @@ https://你的-worker名称.你的子域.workers.dev
 不建议：https://hinge-relay-example.workers.dev/v1
 ```
 
-### 第 8 步：检查健康状态
+#### 第 8 步：检查健康状态
 
 把下面的地址替换成你的 Worker 地址，在浏览器打开：
 
@@ -443,6 +583,19 @@ Cloud Relay 是异步轮询，不是强制唤醒服务。Android Hinge 被系统
 
 ## 9. 如何更新 Relay 项目
 
+### 网页部署后的自动更新
+
+如果你使用了 Cloudflare Workers Builds：
+
+1. 你把代码推送到自己仓库的 `main` 分支，或者在 GitHub 网页合并上游同步 Pull Request。
+2. Cloudflare 会自动开始一次新的构建。
+3. 构建成功后，Worker 会自动部署新版本。
+4. 可以在 Cloudflare Worker 的 `Deployments` 页面查看构建日志和部署结果。
+
+如果只是想修改部署配置或管理员 Token，不要把它们写进 GitHub。分别在 Cloudflare Dashboard 的 `Settings` → `Variables and Secrets` 或构建设置中修改。
+
+如果暂时不想自动部署，可以在 Worker 的 `Settings` → `Builds` 中断开 GitHub 连接或关闭自动部署。Cloudflare 官方的 Git 集成说明见 [Workers Builds 文档](https://developers.cloudflare.com/workers/ci-cd/builds/)。
+
 ### 最简单的方式：手动更新
 
 更新前先备份你自己的部署配置：
@@ -616,5 +769,8 @@ health 正常但注册失败  → 管理员 Token 问题
 - [`SECURITY.md`](SECURITY.md)：安全边界、密钥和 R2 访问规则。
 - [Hinge 主项目](https://github.com/Chengeeker/Hinge)：Windows/Android 客户端。
 - [Hinge Cloud Relay 协议](https://github.com/Chengeeker/Hinge/blob/main/protocol/cloud-relay.md)：客户端和 Worker 之间的数据格式。
+- [Cloudflare Workers Builds](https://developers.cloudflare.com/workers/ci-cd/builds/)：GitHub 网页集成和自动部署。
+- [Cloudflare R2 创建 bucket](https://developers.cloudflare.com/r2/buckets/create-buckets/)：网页创建私有 R2 bucket。
+- [Cloudflare Worker Secrets](https://developers.cloudflare.com/workers/configuration/secrets/)：网页添加 `RELAY_ADMIN_TOKEN`。
 
 本项目是用户自托管软件。部署后的 Cloudflare 费用、配额、域名和账号权限由部署者自己承担和管理，请以 Cloudflare 当前官方文档和控制台显示为准。
