@@ -7,7 +7,7 @@
   "r2_buckets": [
     {
       "binding": "BUCKET",
-      "bucket_name": "hinge-relay123"
+      "bucket_name": "hinge-relay"
     }
   ],
   "triggers": {
