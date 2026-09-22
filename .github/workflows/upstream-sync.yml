@@ -1,0 +1,56 @@
+name: upstream-sync
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 3 * * *"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      UPSTREAM_REPO: ${{ vars.HINGE_RELAY_UPSTREAM || 'Chengeeker/Hinge-Relay' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Fetch upstream
+        run: git fetch "https://github.com/${UPSTREAM_REPO}.git" main
+      - name: Guard user-owned deployment files
+        run: |
+          set -eu
+          base="$(git merge-base HEAD FETCH_HEAD)"
+          for path in wrangler.jsonc .dev.vars .hinge-upstream.json; do
+            if ! git diff --quiet "$base" FETCH_HEAD -- "$path"; then
+              echo "Upstream changed user-owned file: $path"
+              echo "Stop the sync and perform this migration manually."
+              exit 1
+            fi
+          done
+      - name: Merge managed source
+        run: |
+          set -eu
+          branch="bot/upstream-sync-${GITHUB_RUN_ID}"
+          git switch -c "$branch"
+          if git merge --no-commit --no-ff FETCH_HEAD; then
+            if git diff --cached --quiet; then
+              echo "Already up to date."
+              exit 0
+            fi
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -m "chore: sync Hinge Relay upstream"
+            git push --set-upstream origin "$branch"
+            gh pr create --base main --head "$branch" \
+              --title "chore: sync Hinge Relay upstream" \
+              --body "Automated upstream sync. Deployment bindings and secrets were guarded before merge."
+          else
+            git merge --abort
+            echo "Upstream sync has conflicts; resolve them manually."
+            exit 1
+          fi
