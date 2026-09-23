@@ -1,6 +1,6 @@
 {
   "name": "hinge-relay",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "Self-hosted Cloudflare Workers + R2 asynchronous relay for Hinge.",
   "type": "module",

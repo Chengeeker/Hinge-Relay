@@ -32,10 +32,17 @@ export function constantTimeEqual(left: string, right: string): boolean {
   return difference === 0;
 }
 
-export async function requireAdmin(request: Request, env: Env): Promise<boolean> {
+export const MIN_ADMIN_TOKEN_LENGTH = 8;
+
+export function verifyAdminToken(
+  request: Request,
+  env: Env,
+): "authorized" | "not_configured" | "invalid" {
   const provided = bearerToken(request);
   const configured = env.RELAY_ADMIN_TOKEN?.trim() ?? "";
-  return configured.length >= 32 && provided !== null && constantTimeEqual(provided, configured);
+  if (configured.length < MIN_ADMIN_TOKEN_LENGTH) return "not_configured";
+  if (provided === null || !constantTimeEqual(provided, configured)) return "invalid";
+  return "authorized";
 }
 
 export async function readDevice(env: Env, relayDeviceId: string): Promise<DeviceRecord | null> {

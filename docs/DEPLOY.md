@@ -80,11 +80,13 @@
 | --- | --- |
 | Type | `Secret` |
 | Variable name | `RELAY_ADMIN_TOKEN` |
-| Value | 密码管理器生成的随机高强度 Token，至少 32 字节 |
+| Value | 至少 8 个字符；建议密码管理器生成至少 16 个随机英数字符，再复制粘贴 |
 
-然后点击 `Deploy`。
+然后点击 `Deploy` 并等待新部署完成。Cloudflare 保存后不会再次显示 Secret 原值；请保留生成时的值，以便粘贴到 Hinge 注册页面。
 
 这个 Secret 只用于 Hinge 设备首次注册。不要把它填到 GitHub 文件、`wrangler.jsonc`、普通 Variables 或 Cloudflare Workers Builds API Token 中。
+
+注册 API 的认证错误有两种：`503 admin_token_not_configured` 表示当前 Worker 未配置至少 8 字符的 `RELAY_ADMIN_TOKEN`；`401 admin_auth_failed` 表示 Hinge 提交的值缺失或不匹配。检查 Worker 地址是否指向正确的部署、Secret 是否为 Cloudflare Secret 类型，并确认修改后已点击 `Deploy` 且部署成功。旧版 Worker 会把两种情况都返回为普通 `401 admin authentication failed`；先在 `Deployments` 确认最新代码已生效。`/v1/health` 不会暴露管理员 Secret 的配置状态。
 
 ### 6. 检查 Worker
 
@@ -94,7 +96,7 @@
 https://你的-worker地址/v1/health
 ```
 
-看到包含 `service`、`relayVersion`、`apiVersion` 和 `configSchemaVersion` 的 JSON 后，再去 Hinge 的两台设备中填写 Worker 地址并注册设备。
+看到包含 `service`、`relayVersion`、`apiVersion` 和 `configSchemaVersion` 的 JSON 后，再去 Hinge 的两台设备中填写 Worker 地址并注册设备。更新到本次版本后，`relayVersion` 应为 `1.0.1`。
 
 ### 7. 如果缺少 R2 binding
 
@@ -135,6 +137,7 @@ npm run deploy
 - `wrangler.jsonc` 的 `binding` 是 `BUCKET`；
 - `bucket_name` 对应一个私有 R2 bucket；
 - `RELAY_ADMIN_TOKEN` 是 Worker Secret，不是普通明文变量；
+- 管理员 Token 最少 8 个字符；安全上建议密码管理器生成至少 16 个随机英数字符并复制粘贴，不要使用自选短密码；
 - 部署完成后可以访问 `/v1/health`。
 
 ## 四、Pages 的限制

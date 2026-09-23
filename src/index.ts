@@ -7,7 +7,8 @@ import {
   bearerToken,
   constantTimeEqual,
   deviceHeader,
-  requireAdmin,
+  MIN_ADMIN_TOKEN_LENGTH,
+  verifyAdminToken,
   readDevice,
   sha256Hex,
 } from "./lib/auth";
@@ -63,13 +64,25 @@ app.use("/v1/*", async (c, next) => {
 
 app.get("/v1/health", (c) => json(c, {
   service: "hinge-relay",
-  relayVersion: c.env.RELAY_VERSION ?? "1.0.0",
+  relayVersion: c.env.RELAY_VERSION ?? "1.0.1",
   apiVersion: API_VERSION,
   configSchemaVersion: CONFIG_SCHEMA_VERSION,
 }));
 
 app.post("/v1/register", async (c) => {
-  if (!(await requireAdmin(c.req.raw, c.env))) return error(c, "admin authentication failed", 401);
+  const adminAuth = verifyAdminToken(c.req.raw, c.env);
+  if (adminAuth === "not_configured") {
+    return json(c, {
+      error: `RELAY_ADMIN_TOKEN is not configured or is shorter than ${MIN_ADMIN_TOKEN_LENGTH} characters. Add it as a Worker Secret, then deploy.`,
+      code: "admin_token_not_configured",
+    }, 503);
+  }
+  if (adminAuth === "invalid") {
+    return json(c, {
+      error: "Admin token is missing or incorrect. Check the Worker URL, confirm the saved Secret was deployed, and paste its exact value.",
+      code: "admin_auth_failed",
+    }, 401);
+  }
 
   let body: Record<string, unknown>;
   try {

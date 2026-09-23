@@ -7,7 +7,9 @@ Authorization: Bearer <deviceToken>
 X-Hinge-Relay-Device: <opaqueRelayDeviceId>
 ```
 
-`GET /v1/health` is unauthenticated. `POST /v1/register` uses the deployment-only admin bearer token and returns a device token once.
+`GET /v1/health` is unauthenticated. `POST /v1/register` uses the deployment-only admin bearer token (minimum 8 characters) and returns a device token once. A successful health response intentionally does not disclose whether the admin secret is configured.
+
+Registration auth failures are distinguishable: `503` with code `admin_token_not_configured` means the Worker Secret is missing or shorter than 8 characters; `401` with code `admin_auth_failed` means the submitted token is missing or does not match. Eight characters is only the enforced floor; use a randomly generated token (16+ characters recommended), not a human-chosen short password. After adding or changing the secret in the Cloudflare dashboard, deploy the Worker before registering.
 
 ## Endpoints
 

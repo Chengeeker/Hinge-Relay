@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import worker from "../src/index";
 
-const adminToken = "A".repeat(32);
+const adminToken = "A".repeat(8);
 const senderId = "sender-device-01";
 const receiverId = "receiver-device-01";
 const transferId = "123e4567-e89b-42d3-a456-426614174000";
@@ -99,10 +99,10 @@ async function bodyBytes(value: unknown): Promise<Uint8Array> {
   return new Uint8Array(await new Response(value as BodyInit).arrayBuffer());
 }
 
-function env(bucket: MemoryBucket) {
+function env(bucket: MemoryBucket, configuredAdminToken: string | null = adminToken) {
   return {
     BUCKET: bucket,
-    RELAY_ADMIN_TOKEN: adminToken,
+    RELAY_ADMIN_TOKEN: configuredAdminToken ?? undefined,
     RELAY_VERSION: "test",
     DEFAULT_TTL_HOURS: "24",
   } as any;
@@ -119,11 +119,44 @@ function metadata(value: string): string {
   return btoa(value);
 }
 
-async function call(bucket: MemoryBucket, path: string, init: RequestInit = {}): Promise<Response> {
-  return worker.fetch(new Request(`https://relay.test${path}`, init), env(bucket), {} as ExecutionContext);
+async function call(
+  bucket: MemoryBucket,
+  path: string,
+  init: RequestInit = {},
+  configuredAdminToken: string | null = adminToken,
+): Promise<Response> {
+  return worker.fetch(
+    new Request(`https://relay.test${path}`, init),
+    env(bucket, configuredAdminToken),
+    {} as ExecutionContext,
+  );
 }
 
 describe("Hinge Relay API", () => {
+  it("accepts an 8-character admin token and distinguishes registration auth failures", async () => {
+    const bucket = new MemoryBucket();
+    const request = (token: string) => ({
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ relayDeviceId: senderId }),
+    });
+
+    const accepted = await call(bucket, "/v1/register", request(adminToken));
+    expect(accepted.status).toBe(200);
+
+    const missing = await call(bucket, "/v1/register", request(adminToken), null);
+    expect(missing.status).toBe(503);
+    expect(await missing.json()).toMatchObject({ code: "admin_token_not_configured" });
+
+    const notConfigured = await call(bucket, "/v1/register", request(adminToken), "short");
+    expect(notConfigured.status).toBe(503);
+    expect(await notConfigured.json()).toMatchObject({ code: "admin_token_not_configured" });
+
+    const mismatch = await call(bucket, "/v1/register", request("B".repeat(8)));
+    expect(mismatch.status).toBe(401);
+    expect(await mismatch.json()).toMatchObject({ code: "admin_auth_failed" });
+  });
+
   it("registers devices, stores encrypted multipart data, and emits a receipt", async () => {
     const bucket = new MemoryBucket();
     const senderResponse = await call(bucket, "/v1/register", {

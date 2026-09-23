@@ -66,18 +66,23 @@ C:\Users\你的用户名\Documents\Hinge-Relay
 
 ## 3. 你需要准备什么
 
-### 必需
+### 所有部署方式都需要
 
 1. 一个 Cloudflare 账号。
-2. Cloudflare R2 可用的账号/套餐配置。
-3. 一台安装了 Node.js LTS 的 Windows、macOS 或 Linux 电脑，用来部署 Worker。
-4. 两台已经在 Hinge 中互相信任的设备：一台发送，一台接收。
-5. 两台设备上都安装包含 Cloud Relay 功能的 Hinge 版本。
+2. 确认账号中可以使用 Cloudflare Workers 和 R2；具体配额、计费及可用功能以 Cloudflare 当前 Dashboard 和官方价格说明为准。
+3. 两台已经在 Hinge 中互相信任的设备：一台发送，一台接收。
+4. 两台设备上都安装包含 Cloud Relay 功能的 Hinge 版本。
 
-### 可选
+### 选择网页部署时另外需要
 
-- GitHub 账号：使用本文推荐的“Cloudflare 网页部署”时需要；如果只在本地用 Wrangler 部署，可以不使用 GitHub。
-- Git：网页部署不要求你在电脑上安装 Git；只有你打算在本地开发或使用命令行部署时才需要。
+- 一个 GitHub 账号，用于 Fork 项目并让 Cloudflare 连接你的仓库。
+- 不需要在自己的电脑上安装 Node.js、Git 或 Wrangler；GitHub 和 Cloudflare 网页会完成仓库管理与部署。
+
+### 选择命令行部署时另外需要
+
+- 一台安装 Node.js LTS 的 Windows、macOS 或 Linux 电脑。
+- Git 不是 Wrangler 部署的硬性要求；如果你打算克隆/更新代码，才需要安装 Git。
+- Wrangler 会作为项目依赖安装，因此通常不必单独全局安装 Wrangler。
 
 ### 不建议一开始做的事情
 
@@ -98,107 +103,164 @@ C:\Users\你的用户名\Documents\Hinge-Relay
 
 ### 4.1 网页端部署前的准备
 
-网页部署依靠 Cloudflare Workers Builds 从 GitHub 读取源码。你不需要在电脑上执行 `npx`，但需要有一个自己的 GitHub 仓库：
+网页部署是让 Cloudflare 从你的 GitHub 仓库读取源码并自动构建 Worker。整个过程都可以在浏览器里完成；不需要在电脑上安装 Node.js、Git 或 Wrangler，也不需要自己打开终端输入 `npx`。
 
-1. 打开 [Hinge Relay GitHub 仓库](https://github.com/Chengeeker/Hinge-Relay)。
-2. 点击 `Fork`，把项目复制到你自己的 GitHub 账号下。
-3. 后面的操作都在你自己的 Fork 中进行，不要直接修改上游仓库。
+开始前准备好：
 
-你也可以把源码复制到自己的私有仓库，但必须保留项目根目录下的 `package.json`、`package-lock.json`、`src`、`wrangler.jsonc` 和 `tests`。
+1. 一个能登录的 [GitHub 账号](https://github.com/)；
+2. 一个能使用 Workers 和 R2 的 [Cloudflare 账号](https://dash.cloudflare.com/)；
+3. 一台可以同时打开 GitHub 和 Cloudflare Dashboard 的电脑；
+4. 预留几分钟按顺序完成 Fork、R2 bucket、Worker 和 Secret 配置。
 
-### 4.2 在 GitHub 网页修改 Worker 名称和 R2 名称
+建议先在纸上或密码管理器里记下两个**非秘密的名称**，避免做到一半临时想名字：
 
-在你自己的 GitHub 仓库中打开 `wrangler.jsonc`，点击右上角铅笔图标进行编辑。只修改下面两个值：
+| 名称 | 示例 | 用途 |
+| --- | --- | --- |
+| Worker 名称 | `hinge-relay-alice` | 你的 Relay 服务名称，也会用于 Worker 地址 |
+| R2 bucket 名称 | `hinge-relay-alice-files` | 存放加密中转对象的私有 bucket |
+
+示例名称仅供参考；实际名称需要在你的 Cloudflare 账号中可用。不要把管理员 Token 或 Relay 加密密钥当作名称填写。
+
+### 4.2 把 Relay 仓库 Fork 到自己的 GitHub
+
+1. 先登录 GitHub，再打开[上游 Hinge Relay 仓库](https://github.com/Chengeeker/Hinge-Relay)。
+2. 点击页面右上方的 `Fork`。如果 GitHub 显示 Fork 设置页，`Owner` 选择你自己的账号，仓库名通常保持 `Hinge-Relay` 即可。
+3. 点击 `Create fork`，等 GitHub 创建完成。页面地址应变成 `github.com/你的账号/Hinge-Relay`，而不是 `github.com/Chengeeker/Hinge-Relay`。
+4. 后续只编辑自己账号下的这份仓库。上游仓库是项目发布者的源仓库，不要尝试在上游直接保存自己的 Worker 名称或凭据。
+
+如果 `Fork` 按钮不可用，或者你希望仓库保持私有，也可以在 GitHub 上创建自己的仓库并复制完整项目源码。不要只上传 `src`：至少要保留根目录中的 `package.json`、`package-lock.json`、`wrangler.jsonc`、`tsconfig.json`、`src` 和 `tests`，Workers Builds 才能按项目预期安装依赖、检查并部署。
+
+### 4.3 在 GitHub 网页填写自己的资源名称
+
+现在要告诉项目：部署到 Cloudflare 时 Worker 叫什么、使用哪个 R2 bucket。打开你自己账号下的 `Hinge-Relay` 仓库：
+
+1. 确认地址栏是 `github.com/你的账号/Hinge-Relay`。
+2. 在文件列表中找到并打开根目录的 `wrangler.jsonc`。
+3. 点击文件右上方铅笔形状的 `Edit` 按钮（如果 GitHub 显示 `Edit this file`，也是同一个操作）。
+4. 找到下面两处，只替换引号里的示例值；`binding` 保持原样：
 
 ```jsonc
 {
-  "name": "你自己的-worker名称",
+  "name": "hinge-relay-alice",
   "r2_buckets": [
     {
       "binding": "BUCKET",
-      "bucket_name": "你自己的-r2-bucket名称"
+      "bucket_name": "hinge-relay-alice-files"
     }
   ]
 }
 ```
 
-填写规则：
+名称规则和对应关系：
 
-- `name` 是 Worker 名称。Cloudflare 网页中显示的 Worker 名称必须和这里完全一致。
-- `bucket_name` 是你接下来在 R2 中创建的 bucket 名称。
-- `binding` 必须保持为 `BUCKET`，不能改成其他名字。
-- bucket 名称只能使用小写字母、数字和短横线，不能以短横线开头或结尾。
-- `DEFAULT_TTL_HOURS` 默认是 `168`，表示中转记录最多保留 7 天。
+- `name` 是 Worker 名称。之后 Cloudflare 创建的 Worker 名称必须与这里逐字一致；不要在 Dashboard 创建另一个不同名字的 Worker。
+- `bucket_name` 是下一步要创建的 R2 bucket 名称，之后也必须逐字一致。
+- `binding` 是源代码使用的绑定标识，必须保持大写 `BUCKET`，不能改名。
+- bucket 名称使用小写英文字母、数字和短横线，长度为 3–63 个字符，不要以短横线开头或结尾；Cloudflare 还会检查名称是否已被占用。
+- `DEFAULT_TTL_HOURS` 当前默认是 `168`，表示中转记录按最多 7 天的期限清理。初次部署先保留默认值。
 
-编辑完成后点击 `Commit changes`，提交到 `main` 分支。不要把 `RELAY_ADMIN_TOKEN`、Relay 密钥或其他真实凭据写进这个文件。
+5. 改完后往下滚动到 `Commit changes` 区域。提交说明可以写 `Set my Worker and R2 names`。
+6. 选择直接提交到 `main`（默认选项），再点击绿色的 `Commit changes` 确认。
+7. 返回仓库文件列表，重新打开 `wrangler.jsonc` 检查两个名称是否已经保存。
 
-### 4.3 在 Cloudflare 网页创建私有 R2 bucket
+这里仅填写资源名称。**不要**在 `wrangler.jsonc`、GitHub 提交说明或 GitHub 文件中填写 `RELAY_ADMIN_TOKEN`、Relay 加密密钥、Cloudflare API Token 或其他真实凭据。改动提交到自己的 `main` 后，Cloudflare 才能读到这份配置。
 
-1. 登录 [Cloudflare Dashboard](https://dash.cloudflare.com/)。
-2. 进入 `R2 Object Storage`。
-3. 点击 `Create bucket`。
-4. 填写的 bucket 名称必须和 GitHub 中 `wrangler.jsonc` 的 `bucket_name` 完全一致。
-5. 选择存储位置和默认存储类别，然后创建。
+### 4.4 在 Cloudflare 网页创建私有 R2 bucket
 
-创建后不要打开公开访问，也不要启用公开的 `r2.dev` 文件地址。Hinge Relay 只通过 Worker API 访问私有 R2。
+1. 登录 [Cloudflare Dashboard](https://dash.cloudflare.com/)，确认页面左上角显示的是你准备使用的账号。
+2. 从侧边栏打开 `R2 Object Storage`（部分界面可能先显示 `R2` 或 `Storage & databases`）。
+3. 进入 bucket 列表/Overview，点击 `Create bucket`。
+4. 在 Bucket name 输入框中，填写刚才写进 `wrangler.jsonc` 的完整 `bucket_name`，例如 `hinge-relay-alice-files`。注意不要多打空格，也不要带引号。
+5. 如果页面提供位置或存储类别选项，首次部署可以使用 Cloudflare 推荐/默认选项；选择后点击创建按钮。
+6. 回到 bucket 列表，确认新 bucket 出现在**当前这个 Cloudflare 账号**下，且名称拼写与 GitHub 文件一致。
 
-### 4.4 通过 Cloudflare 网页导入 GitHub 仓库
+创建后保持 bucket 私有。不要启用公开访问，也不要为这个 bucket 开启公开的 `r2.dev` 文件地址。Hinge Relay 通过 Worker 的 `BUCKET` 绑定访问对象，不要求把 bucket 变成公开文件站点。若 Cloudflare 页面要求选择地区，按账号页面能选到的选项操作即可；这个选择不改变 GitHub 中配置的 bucket 名称。
+
+### 4.5 让 Cloudflare 网页连接你的 GitHub 仓库
+
+这一步是在创建 Cloudflare Worker，并让它以后跟踪你 GitHub 仓库的 `main` 分支：
 
 1. 在 Cloudflare Dashboard 打开 `Workers & Pages`。
-2. 点击 `Create application`。
-3. 在 `Import a repository` 旁边点击 `Get started`。
-4. 选择或授权你的 GitHub 账号。
-5. 选择你自己的 Hinge Relay 仓库和 `main` 分支。
-6. 配置项目时使用下面的值：
+2. 点击 `Create application`。如果出现多个选项，选择导入 GitHub 仓库/Workers Builds 的路径；不要选择只上传静态文件的 Pages 上传。
+3. 在 `Import a repository` 一栏点击 `Get started`（Cloudflare 界面文字可能稍有变化）。
+4. 如果 Cloudflare 请求连接 GitHub，点击授权并在 GitHub 页面确认。为了缩小权限范围，如果页面提供仓库选择，尽量只允许访问你的 Hinge-Relay Fork。
+5. 返回 Cloudflare，选择 GitHub 账号/组织，再选择自己 Fork 的 `Hinge-Relay` 仓库。确认选中的不是 `Chengeeker/Hinge-Relay` 上游仓库。
+6. 选择生产分支 `main`。如果页面要求先填写 Worker 名称，此名称必须与 `wrangler.jsonc` 的 `name` 完全一致。
+7. 展开构建设置/Advanced settings（若界面有此项），按下表填写：
 
 | Cloudflare 设置 | 应填写的内容 |
 | --- | --- |
-| Root directory | 留空，或填写 `/`；本项目就在仓库根目录 |
+| Root directory | 留空，使用仓库根目录；若页面强制要求填写，则选择 `/` 或根目录 |
 | Production branch | `main` |
 | Build command | `npm run check`（可选，建议保留） |
 | Deploy command | `npm run deploy` |
-| Non-production branch deploy command | 不需要测试分支时保持默认或关闭 |
+| Preview / 非生产分支部署 | 暂时不需要预览分支时保持关闭或默认值 |
 
-本项目已经包含 `wrangler.jsonc`，Cloudflare 会使用其中的 Worker 名称、R2 binding 和定时任务。`npm run deploy` 已经写在 `package.json` 中；如果界面没有要求你填写 Deploy command，也可以使用默认的 `npx wrangler deploy`。
+本项目已经包含 `wrangler.jsonc`，其中定义 Worker 名称、R2 binding 和定时任务。`npm run check` 会检查 TypeScript；`npm run deploy` 会调用项目自带的 Wrangler 部署脚本。Cloudflare 在后台执行这些项目命令，你不需要在自己的电脑上执行 `npx`。若界面自动填入默认部署命令且不能编辑，保留 Cloudflare 为该项目提供的默认 Wrangler 部署命令即可。
 
-点击 `Save and Deploy`。Cloudflare 会安装项目依赖、执行构建并部署 Worker。成功后会显示一个类似下面的地址：
+8. 仔细检查仓库、`main` 分支、Root directory 和 Worker 名称后，点击 `Save and Deploy`（或界面上的同义按钮）。这会开始第一次构建和部署。
+9. 部署期间不要关闭或删除 Worker。打开 Worker 的 `Deployments` 页面/构建历史，可以看到正在进行的步骤；失败时点开失败的那次构建查看具体日志。
+10. 成功后，在 Worker 的概览/设置页找到 `workers.dev` 域名。地址通常类似：
 
 ```text
-https://你的-worker名称.你的子域.workers.dev
+https://hinge-relay-alice.你的子域.workers.dev
 ```
 
-Cloudflare 官方说明：连接 GitHub 后，后续推送到选定分支会自动触发构建和部署；如果部署失败，先检查 Dashboard 中 Worker 名称是否与 `wrangler.jsonc` 的 `name` 完全一致。
+复制这个根地址，稍后配置 Hinge 时使用；不要在 Hinge 的 Worker 地址栏后面附加 `/v1`。首次部署成功只说明 Cloudflare 接受了构建和部署；下一步还要单独设置 Secret 并完成健康检查、设备注册。
 
-### 4.5 在 Cloudflare 网页添加管理员 Token
+连接完成后，对自己 `main` 分支的后续代码提交会触发 Cloudflare 构建/部署。可以在 Worker 的 `Deployments` 查看每次结果。Cloudflare 的 Git 集成设置入口或按钮文字可能随 Dashboard 更新而变化；找不到时，可从该 Worker 的 `Settings` → `Builds` 检查 GitHub 连接、生产分支和部署命令。
 
-这一步不要把 Token 写进 GitHub。进入刚创建的 Worker：
+### 4.6 在 Cloudflare 网页添加管理员 Token
+
+管理员 Token 是首次把 Hinge 设备注册到 Relay 时用的凭据。请用密码管理器生成随机值（建议至少 16 个随机字符），并暂时安全保存。当前 Worker 接受的最低长度是 8 个字符；8 只是系统下限，不是建议强度。不要手工编一个常见短密码。
+
+现在在 Cloudflare Dashboard 进入刚创建的 Worker：
 
 1. `Workers & Pages` → 选择你的 Worker。
 2. 打开 `Settings`。
-3. 找到 `Variables and Secrets`。
-4. 点击 `Add`，类型选择 `Secret`。
-5. 变量名填写：
+3. 找到 `Variables and Secrets`（有些界面会先显示 `Variables`）。
+4. 点击 `Add` / `Add variable`，类型或类别选择 `Secret`，不要选普通明文变量。
+5. 名称填写下面这个值，大小写和下划线都要一致：
 
 ```text
 RELAY_ADMIN_TOKEN
 ```
 
-6. 值填写一个密码管理器生成的随机高强度 Token，至少 32 字节。
-7. 点击 `Deploy` 保存。
+6. 将密码管理器生成的 Token 粘贴到值输入框。检查首尾没有意外空格，再点击保存/继续。
+7. Cloudflare 通常会显示部署确认页或 `Deploy` 按钮；点击它，让新增的 Secret 应用到 Worker。
+8. 回到 `Deployments` 等待这次部署显示成功，再进行设备注册。
 
-这个 Token 只用于第一次注册 Windows/Android 设备。不要把它误填到 Cloudflare Workers Builds 的 API Token、GitHub Secret 或 `wrangler.jsonc` 中；它们是不同用途的凭据。
+这个 Token 只用于首次注册 Windows/Android 设备。不要把它误填到 Cloudflare Workers Builds 的 API Token、GitHub Secret 或 `wrangler.jsonc` 中；它们是不同用途的凭据。管理员 Token 不加密文件，Relay 加密密钥也不能代替管理员 Token。
 
-### 4.6 检查网页部署是否成功
+Cloudflare 保存后不会再次显示 Secret 原值。注册 Hinge 设备时要粘贴完全相同的 Token。如果之后弄丢原值，不需要找回旧值：在同一位置设置新 Token 并再次部署，然后在注册设备时使用新 Token。
 
-在浏览器打开：
+### 4.7 检查 Worker，再注册设备验证完整链路
+
+先把 `你的 Worker 根地址` 替换为上一步复制的 `workers.dev` 地址，并在浏览器打开：
 
 ```text
-https://你的-worker地址/v1/health
+https://hinge-relay-alice.你的子域.workers.dev/v1/health
 ```
 
-如果返回包含 `service`、`relayVersion`、`apiVersion` 和 `configSchemaVersion` 的 JSON，说明 Worker、R2 binding 和路由已经能正常工作。然后再按照[配置两台 Hinge 设备](#5-配置两台-hinge-设备)操作。
+正常时页面会显示一段 JSON，字段包括 `service`、`relayVersion`、`apiVersion` 和 `configSchemaVersion`。这一步证明浏览器能访问 Worker 健康检查路由，并能看到当前部署版本；**它不会验证管理员 Secret 是否正确，也不会实际读写 R2**。如果健康检查不通，先看下面的构建/域名排查，不要继续在 Hinge 里反复注册。
 
-### 4.7 如果网页部署提示缺少 BUCKET
+接下来按照[配置两台 Hinge 设备](#5-配置两台-hinge-设备)分别注册 Windows 和 Android。设备注册会实际使用管理员 Secret，并写入 R2 的设备记录；两台设备注册成功后，再按[第一次完整测试](#6-第一次完整测试)发一个小文件，这才是对 Worker、Secret、R2 binding 和 Hinge 配置的端到端检查。
+
+### 4.8 出错时按现象检查
+
+| 现象 | 优先检查 |
+| --- | --- |
+| Cloudflare 找不到仓库 | 回到 GitHub 授权页，确认授权了你自己的 Fork；必要时在 Cloudflare GitHub 集成设置中更新仓库访问范围 |
+| 构建在部署前失败 | 打开失败构建日志；检查 Root directory 是仓库根目录，且根目录包含 `package.json`、`package-lock.json`、`src`、`wrangler.jsonc` |
+| 提示 Worker 名称不匹配 | 比较 Dashboard 中 Worker 名称与 Fork 的 `wrangler.jsonc` → `name`，修正后提交到 `main` 并重新部署 |
+| Worker 页面有，但 `/v1/health` 是 404 | 检查是否复制了正确的 `workers.dev` 根地址，以及路径是否为 `/v1/health`；不要误用 Pages 静态站点地址 |
+| Hinge 注册返回 `503 admin_token_not_configured` | Secret 名必须精确为 `RELAY_ADMIN_TOKEN`、类型选 `Secret`、长度至少 8，并在添加后点击 `Deploy` 等待部署成功 |
+| Hinge 注册返回 `401 admin_auth_failed` | 重新核对 Worker 地址和管理员 Token；Cloudflare 不会再显示已保存的值，可重设 Secret 并部署后重试 |
+| 部署或注册时报 `BUCKET` / R2 错误 | 核对 GitHub `wrangler.jsonc` 的 `bucket_name` 与当前 Cloudflare 账号里的真实 bucket 名称完全一致，且 `binding` 仍为 `BUCKET` |
+
+排错时先查看 Cloudflare Worker 的 `Deployments` 中最新一次构建详情和日志。README 第 10 节也整理了设备注册与传输阶段的常见问题。
+
+### 4.9 如果网页部署提示缺少 BUCKET
 
 优先回到 GitHub，确认 `wrangler.jsonc` 中同时存在：
 
@@ -207,15 +269,15 @@ https://你的-worker地址/v1/health
 "bucket_name": "你创建的bucket名称"
 ```
 
-然后在 Cloudflare 的 `Settings` → `Builds` 中重新执行一次部署。只有在当前 Dashboard 明确要求手动添加 binding 时，才进入 `Settings` → `Bindings` → `Add` → `R2 bucket`，变量名填写 `BUCKET`，选择同一个 bucket 并重新部署。
+先确认 bucket 已经在同一个 Cloudflare 账号中创建，再回到 Worker 的 `Settings` → `Builds` 重新部署（也可以在 `Deployments` 中选择重试失败的构建）。如果 Dashboard 明确提示运行时缺少 R2 binding，才通过 `Settings` → `Bindings` → `Add` → `R2 bucket` 手动检查或添加：变量名填写 `BUCKET`，选择同一个 bucket 并重新部署。
 
-后续仍应以 GitHub 中的 `wrangler.jsonc` 为准。不要一边在 Dashboard 手动改 binding，一边让 GitHub 构建使用另一份配置。
+本项目使用 GitHub + Wrangler 配置作为部署来源。后续仍应以自己仓库的 `wrangler.jsonc` 为准；不要长期在 Dashboard 和 GitHub 中维护两份不一致的 binding 配置。
 
-### 4.8 为什么不推荐直接把代码粘贴到 Cloudflare 编辑器
+### 4.10 为什么不推荐直接把代码粘贴到 Cloudflare 编辑器
 
 这个项目不是一个可以粘贴成单个 JavaScript 文件的小 Worker，它包含多个 TypeScript 文件、Hono 依赖、R2 配置、定时任务和测试。直接使用在线代码编辑器容易漏掉依赖或 binding。
 
-因此对不熟悉命令行的用户，推荐使用：
+因此对不熟悉命令行的用户，推荐按本节完成下面这条网页流程：
 
 ```text
 GitHub 网页仓库
@@ -225,7 +287,7 @@ GitHub 网页仓库
 
 这条路径不需要本地安装 Node.js、Git、Wrangler，也不需要执行任何 `npx` 命令。Cloudflare Pages 的静态文件上传仍然不能代替 Worker API 部署。
 
-### 4.9 命令行部署（备用方案）
+### 4.11 命令行部署（备用方案）
 
 下面命令以 Windows PowerShell 为例。请把示例中的路径替换成你自己保存 Hinge Relay 的位置。
 
@@ -328,7 +390,7 @@ Relay 的“管理员 Token”只用于把设备注册到你的 Worker。设备�
 npx wrangler secret put RELAY_ADMIN_TOKEN
 ```
 
-终端会要求你输入一个秘密值。可以使用密码管理器生成一个随机的高强度 Token，至少 32 字节；不要使用 `123456`、Cloudflare 密码或 GitHub Token。
+终端会要求你输入一个秘密值。最少 8 个字符；建议密码管理器生成至少 16 个随机英数字符。不要使用 `123456`、自己常用的密码、Cloudflare 密码或 GitHub Token。
 
 这个值只需要在下面注册 Windows 和 Android 设备时临时输入。不要把它写进：
 
@@ -385,9 +447,9 @@ Invoke-RestMethod "https://你的-worker地址/v1/health"
 | 名称 | 用途 | 是否两台设备相同 |
 | --- | --- | --- |
 | Worker 地址 | 找到你的 Relay 服务 | 相同 |
-| Relay 加密密钥 | 让两台设备互相解密文件 | 相同 |
-| 部署 Token | 首次把设备注册到 Worker | 输入同一个值，但不会长期保存 |
-| Device Token | 某一台设备日常调用 API | 不同，由 Worker 生成 |
+| Relay 加密密钥 | 两台设备共享的文件加密主密钥；当前生成 32 字节随机值（43 个 Base64URL 字符），只留在设备上 | 相同；点“生成密钥/复制密钥”后粘贴，不要手打 |
+| 部署 Token | Worker 管理员凭据，只授权设备注册，不加密文件；至少 8 字符，建议用密码管理器生成 16+ 个随机字符 | 注册每台设备时使用同一个值，成功后不长期保存 |
+| Device Token | Worker 返回给每台设备的日常 API 凭据 | 不同，由 Worker 生成并由 Hinge 保存 |
 
 ### 5.1 先确认 Hinge 设备信任关系
 
@@ -418,6 +480,8 @@ Cloud Relay 不负责第一次配对。这样设计是为了避免任何拿到 W
 最后回到 Windows，也确认已经打开 `启用 Cloud Relay`。
 
 Android 的注册页面不会长期保存部署 Token。Windows 端也应把它当作一次性注册凭据使用。两台设备真正长期使用的是各自的 device token。
+
+简单记忆：部署 Token 是“允许这台设备加入 Relay”的登记凭据；Relay 加密密钥才是“让两台设备能解密文件”的共享秘密。不要把前者当成文件密钥，也不要把后者填到 Cloudflare 的 `RELAY_ADMIN_TOKEN`。
 
 ### 5.3 为什么必须使用同一个 Relay 密钥
 
@@ -498,13 +562,19 @@ Worker 需要知道路由和分块信息，但不会读取文件名、文件内�
 
 ### `/v1/health` 正常，但注册设备失败
 
-通常是管理员 Token 不一致。重新执行：
+请先看 Hinge 的完整报错以及 Worker 的 `/v1/health`：
+
+- `503` / `admin_token_not_configured`：当前部署没有可用的 `RELAY_ADMIN_TOKEN`，或它少于 8 个字符。到 Cloudflare `Settings` → `Variables and Secrets` 检查它是 `Secret`，然后点击 `Deploy` 并等待部署成功。
+- `401` / `admin_auth_failed`：Hinge 填入的 Token 与当前 Worker 不一致，或 Worker 地址指向了另一份部署。请从密码管理器重新复制原值；Cloudflare 不会在保存后再次显示 Secret。
+- 如果仍只看到旧版的 `admin authentication failed`，先查看 Cloudflare `Deployments` 是否已经部署包含此诊断的最新版本；旧版 Worker 会把“Secret 未部署”和“值不匹配”都返回为同一个 401。
+
+保存新的 Secret 后必须点击 `Deploy`，等新部署完成，再用这一个新值注册。网页方式在 Cloudflare Dashboard 修改；命令行方式可执行：
 
 ```powershell
 npx wrangler secret put RELAY_ADMIN_TOKEN
 ```
 
-然后把新值同时填入设备注册页面。注意不要把设备 Token 当成管理员 Token，也不要把 Relay 加密密钥当成管理员 Token。
+然后把同一个新值粘贴到设备注册页面。不要把设备 Token 当成管理员 Token，也不要把 Relay 加密密钥当成管理员 Token。`/v1/health` 不会检查或公开管理员 Secret 是否正确，这是有意的安全边界。
 
 ### 注册提示 receiver 未注册
 
@@ -753,7 +823,7 @@ npm run dev
 
 ```text
 /v1/health 打不开       → Cloudflare Worker/域名/部署问题
-health 正常但注册失败  → 管理员 Token 问题
+health 正常但注册失败  → 根据 503/401 检查 Secret 是否已部署、值是否匹配
 注册成功但无法解密     → 两台设备 Relay 密钥不一致
 文件不自动出现         → Android 轮询或系统后台限制
 一直走 LAN              → LAN 优先，是预期行为
