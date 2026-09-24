@@ -133,6 +133,49 @@ async function call(
 }
 
 describe("Hinge Relay API", () => {
+  it("queues only bounded authenticated ciphertext for the registered receiver", async () => {
+    const bucket = new MemoryBucket();
+    const register = async (relayDeviceId: string) => {
+      const response = await call(bucket, "/v1/register", {
+        method: "POST", headers: { Authorization: `Bearer ${adminToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ relayDeviceId }),
+      });
+      return (await response.json() as { deviceToken: string }).deviceToken;
+    };
+    const senderToken = await register(senderId);
+    const receiverToken = await register(receiverId);
+    const now = Math.floor(Date.now() / 1000);
+    const envelope = {
+      version: 1, eventId: transferId, senderRelayDeviceId: senderId,
+      receiverRelayDeviceId: receiverId, createdAt: now, createdAtMs: now * 1000 + 2,
+      expiresAt: now + 3600,
+      ciphertext: "dGVzdA", nonce: "AAAAAAAAAAAAAAAA", tag: "AAAAAAAAAAAAAAAAAAAAAA",
+    };
+    const send = (token: string, value = envelope) => call(bucket, "/v1/clipboard", {
+      method: "POST", headers: { ...auth(token, senderId), "Content-Type": "application/json" },
+      body: JSON.stringify(value),
+    });
+    expect((await send(senderToken)).status).toBe(201);
+    expect((await send("wrong-token")).status).toBe(401);
+    expect((await send(senderToken)).status).toBe(409);
+    expect((await send(senderToken, { ...envelope, expiresAt: now + 7200 })).status).toBe(422);
+    const earlierId = "123e4567-e89b-42d3-a456-426614174001";
+    expect((await send(senderToken, { ...envelope, eventId: earlierId, createdAtMs: now * 1000 + 1 })).status).toBe(201);
+    const inbox = await call(bucket, "/v1/clipboard", { headers: auth(receiverToken, receiverId) });
+    const items = (await inbox.json() as { items: Array<{ eventId: string }> }).items;
+    expect(items.map((item) => item.eventId)).toEqual([earlierId, transferId]);
+    const otherInbox = await call(bucket, "/v1/clipboard", { headers: auth(senderToken, senderId) });
+    expect((await otherInbox.json() as { items: unknown[] }).items).toHaveLength(0);
+    const ack = await call(bucket, `/v1/clipboard/${transferId}/ack`, {
+      method: "POST", headers: auth(receiverToken, receiverId), body: "{}",
+    });
+    expect(ack.status).toBe(200);
+    expect((await call(bucket, `/v1/clipboard/${earlierId}/ack`, {
+      method: "POST", headers: auth(receiverToken, receiverId), body: "{}",
+    })).status).toBe(200);
+    const emptied = await call(bucket, "/v1/clipboard", { headers: auth(receiverToken, receiverId) });
+    expect((await emptied.json() as { items: unknown[] }).items).toHaveLength(0);
+  });
   it("accepts an 8-character admin token and distinguishes registration auth failures", async () => {
     const bucket = new MemoryBucket();
     const request = (token: string) => ({

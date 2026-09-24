@@ -55,6 +55,19 @@ export interface Receipt {
   deliveredAt: number;
 }
 
+export interface ClipboardEnvelope {
+  version: 1;
+  eventId: string;
+  senderRelayDeviceId: string;
+  receiverRelayDeviceId: string;
+  createdAt: number;
+  createdAtMs: number;
+  expiresAt: number;
+  ciphertext: string;
+  nonce: string;
+  tag: string;
+}
+
 export interface UploadedPart {
   partNumber: number;
   etag: string;

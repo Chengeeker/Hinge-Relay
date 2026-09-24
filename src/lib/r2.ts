@@ -5,6 +5,7 @@ export const transferKey = (sender: string, id: string) => `transfers/${sender}/
 export const blobKey = (receiver: string, id: string) => `blobs/${receiver}/${id}.bin`;
 export const inboxKey = (receiver: string, id: string) => `inbox/${receiver}/${id}.json`;
 export const receiptKey = (sender: string, id: string) => `receipts/${sender}/${id}.json`;
+export const clipboardKey = (receiver: string, id: string) => `clipboard/${receiver}/${id}.json`;
 
 export async function readJson<T>(env: Env, key: string): Promise<T | null> {
   const object = await env.BUCKET.get(key);

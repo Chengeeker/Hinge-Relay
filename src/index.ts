@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
-import type { Env, Receipt, RelayManifest, TransferRecord, UploadedPart } from "./types";
+import type { ClipboardEnvelope, Env, Receipt, RelayManifest, TransferRecord, UploadedPart } from "./types";
 import {
   authenticateDevice,
   bearerToken,
@@ -14,6 +14,7 @@ import {
 } from "./lib/auth";
 import {
   blobKey,
+  clipboardKey,
   deviceKey,
   inboxKey,
   readJson,
@@ -27,6 +28,7 @@ import {
   API_VERSION,
   CONFIG_SCHEMA_VERSION,
   isBase64Url,
+  isClipboardEnvelope,
   isFiniteInteger,
   isManifest,
   isSafeId,
@@ -117,6 +119,60 @@ app.get("/v1/devices/:relayDeviceId", async (c) => {
   if (!isSafeId(relayDeviceId)) return error(c, "invalid relayDeviceId", 422);
   const target = await readDevice(c.env, relayDeviceId);
   return json(c, { registered: target !== null });
+});
+
+// Clipboard payloads are encrypted on the client; the Worker only authenticates
+// the sender and bounds the queued ciphertext. Old file-only clients ignore it.
+app.post("/v1/clipboard", async (c) => {
+  const sender = await authenticateDevice(c.req.raw, c.env);
+  if (!sender) return error(c, "device authentication failed", 401);
+  const declaredLength = Number(c.req.header("Content-Length") ?? "0");
+  if (declaredLength > 24000) return error(c, "clipboard envelope too large", 413);
+  const raw = await readBoundedClipboardBody(c.req.raw);
+  if (raw === null) return error(c, "clipboard envelope too large or invalid", 413);
+  let body: unknown;
+  try { body = JSON.parse(raw); } catch { return error(c, "invalid JSON body", 400); }
+  if (!isClipboardEnvelope(body) || body.senderRelayDeviceId !== sender.relayDeviceId) {
+    return error(c, "invalid clipboard envelope", 422);
+  }
+  const now = Math.floor(Date.now() / 1000);
+  if (body.createdAt < now - 300 || body.createdAt > now + 300 ||
+      body.expiresAt <= now || body.expiresAt > now + 3600 ||
+      body.expiresAt <= body.createdAt) {
+    return error(c, "invalid clipboard expiry", 422);
+  }
+  if (!(await readDevice(c.env, body.receiverRelayDeviceId))) return error(c, "receiver is not registered", 404);
+  const key = clipboardKey(body.receiverRelayDeviceId, body.eventId);
+  if (await c.env.BUCKET.head(key)) return error(c, "clipboard event already exists", 409);
+  await writeJson(c.env, key, body);
+  return json(c, { eventId: body.eventId }, 201);
+});
+
+app.get("/v1/clipboard", async (c) => {
+  const receiver = await authenticateDevice(c.req.raw, c.env);
+  if (!receiver) return error(c, "device authentication failed", 401);
+  const listed = await c.env.BUCKET.list({ prefix: `clipboard/${receiver.relayDeviceId}/`, limit: 100 });
+  const now = Math.floor(Date.now() / 1000);
+  const items: ClipboardEnvelope[] = [];
+  for (const object of listed.objects) {
+    const item = await readJson<ClipboardEnvelope>(c.env, object.key);
+    if (item && isClipboardEnvelope(item) && item.receiverRelayDeviceId === receiver.relayDeviceId && item.expiresAt > now) {
+      items.push(item);
+    } else {
+      await c.env.BUCKET.delete(object.key);
+    }
+  }
+  items.sort((a, b) => a.createdAtMs - b.createdAtMs || a.eventId.localeCompare(b.eventId));
+  return json(c, { items });
+});
+
+app.post("/v1/clipboard/:eventId/ack", async (c) => {
+  const receiver = await authenticateDevice(c.req.raw, c.env);
+  if (!receiver) return error(c, "device authentication failed", 401);
+  const eventId = c.req.param("eventId");
+  if (!isTransferId(eventId)) return error(c, "invalid event id", 422);
+  await c.env.BUCKET.delete(clipboardKey(receiver.relayDeviceId, eventId));
+  return json(c, { eventId, status: "acknowledged" });
 });
 
 app.post("/v1/transfers", async (c) => {
@@ -329,8 +385,48 @@ function base64Url(bytes: Uint8Array): string {
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
+async function readBoundedClipboardBody(request: Request): Promise<string | null> {
+  if (!request.body) return null;
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.length;
+      if (total > 24000) {
+        await reader.cancel();
+        return null;
+      }
+      chunks.push(value);
+    }
+    const bytes = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.length;
+    }
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return null;
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 async function cleanupExpired(env: Env): Promise<void> {
   const now = Math.floor(Date.now() / 1000);
+  let clipboardCursor: string | undefined;
+  for (let page = 0; page < 10; page++) {
+    const clipboard = await env.BUCKET.list({ prefix: "clipboard/", limit: 100, cursor: clipboardCursor });
+    for (const object of clipboard.objects) {
+      const item = await readJson<ClipboardEnvelope>(env, object.key);
+      if (!item || !isClipboardEnvelope(item) || item.expiresAt <= now) await env.BUCKET.delete(object.key);
+    }
+    if (!clipboard.truncated || !clipboard.cursor) break;
+    clipboardCursor = clipboard.cursor;
+  }
   const inbox = await env.BUCKET.list({ prefix: "inbox/", limit: 100 });
   for (const object of inbox.objects) {
     const manifest = await readJson<RelayManifest>(env, object.key);

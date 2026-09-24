@@ -1,10 +1,25 @@
-import type { RelayManifest, UploadedPart } from "../types";
+import type { ClipboardEnvelope, RelayManifest, UploadedPart } from "../types";
 
 export const API_VERSION = 1;
 export const CONFIG_SCHEMA_VERSION = 1;
 export const PART_SIZE = 8 * 1024 * 1024;
 export const MAX_PART_COUNT = 65536;
 export const MAX_TTL_HOURS = 24 * 30;
+export const MAX_CLIPBOARD_CIPHERTEXT_LENGTH = 22000;
+
+export function isClipboardEnvelope(value: unknown): value is ClipboardEnvelope {
+  if (typeof value !== "object" || value === null) return false;
+  const item = value as Partial<ClipboardEnvelope>;
+  return item.version === 1 && isTransferId(item.eventId) &&
+    isSafeId(item.senderRelayDeviceId) && isSafeId(item.receiverRelayDeviceId) &&
+    isFiniteInteger(item.createdAt, 0, Number.MAX_SAFE_INTEGER) &&
+    isFiniteInteger(item.createdAtMs, 0, Number.MAX_SAFE_INTEGER) &&
+    Math.floor(item.createdAtMs / 1000) === item.createdAt &&
+    isFiniteInteger(item.expiresAt, 1, Number.MAX_SAFE_INTEGER) &&
+    isBase64Url(item.ciphertext) && item.ciphertext.length <= MAX_CLIPBOARD_CIPHERTEXT_LENGTH &&
+    isBase64Url(item.nonce) && item.nonce.length === 16 &&
+    isBase64Url(item.tag) && item.tag.length === 22;
+}
 
 export function isSafeId(value: unknown): value is string {
   return typeof value === "string" && /^[A-Za-z0-9_-]{8,160}$/.test(value);
